@@ -1,0 +1,72 @@
+{
+  "name": "surfcode",
+  "version": "0.1.0",
+  "description": "SurfCode — a beautiful, provider-agnostic AI coding agent for your terminal.",
+  "type": "module",
+  "bin": {
+    "surf": "dist/cli.js",
+    "surfcode": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.tsx",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "models:update": "node scripts/update-models.mjs",
+    "logo:render": "bash scripts/render-logo.sh",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "coding-agent",
+    "terminal",
+    "tui",
+    "llm",
+    "openai",
+    "anthropic",
+    "gemini",
+    "provider-agnostic"
+  ],
+  "author": "Geetank",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surfcode/surfcode.git"
+  },
+  "dependencies": {
+    "chalk": "^6.0.1",
+    "cli-highlight": "^2.1.11",
+    "cli-truncate": "^6.1.1",
+    "commander": "^15.0.0",
+    "diff": "^9.0.0",
+    "env-paths": "^4.0.0",
+    "html-to-text": "^10.0.1",
+    "ignore": "^7.0.13",
+    "ink": "^8.0.0",
+    "jsonc-parser": "^3.3.1",
+    "marked": "^18.1.1",
+    "react": "^19.3.1",
+    "string-width": "^8.3.0",
+    "strip-ansi": "^7.2.0",
+    "tinyglobby": "^0.2.17",
+    "wrap-ansi": "^10.0.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "ink-testing-library": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
