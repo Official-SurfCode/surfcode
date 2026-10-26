@@ -1,6 +1,6 @@
 {
   "name": "surfcode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SurfCode — a beautiful, provider-agnostic AI coding agent for your terminal.",
   "type": "module",
   "bin": {
