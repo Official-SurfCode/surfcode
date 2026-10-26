@@ -5,7 +5,7 @@ Thanks for helping make SurfCode better! Bug reports, ideas and pull requests ar
 ## Setup
 
 ```bash
-git clone https://github.com/Geetank/surfcode.git
+git clone https://github.com/Official-SurfCode/surfcode.git
 cd surfcode
 npm install          # installs dependencies and builds dist/
 npm run dev          # run the TUI from source

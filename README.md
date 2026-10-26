@@ -50,13 +50,13 @@ surf --version
 **Straight from GitHub**
 
 ```bash
-npm install -g github:Geetank/surfcode
+npm install -g github:Official-SurfCode/surfcode
 ```
 
 **From source**
 
 ```bash
-git clone https://github.com/Geetank/surfcode.git
+git clone https://github.com/Official-SurfCode/surfcode.git
 cd surfcode
 npm install        # also builds dist/
 npm link           # puts `surf` and `surfcode` on your PATH

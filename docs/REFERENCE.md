@@ -54,7 +54,7 @@ The package installs two equivalent commands: **`surf`** and **`surfcode`**.
 From source:
 
 ```bash
-git clone https://github.com/Geetank/surfcode.git
+git clone https://github.com/Official-SurfCode/surfcode.git
 cd surfcode
 npm install
 npm run build

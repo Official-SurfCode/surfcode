@@ -40,13 +40,13 @@
   ],
   "author": "Geetank",
   "license": "MIT",
-  "homepage": "https://github.com/Geetank/surfcode#readme",
+  "homepage": "https://github.com/Official-SurfCode/surfcode#readme",
   "bugs": {
-    "url": "https://github.com/Geetank/surfcode/issues"
+    "url": "https://github.com/Official-SurfCode/surfcode/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Geetank/surfcode.git"
+    "url": "https://github.com/Official-SurfCode/surfcode.git"
   },
   "dependencies": {
     "chalk": "^6.0.1",
