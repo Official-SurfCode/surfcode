@@ -23,6 +23,7 @@
     "test": "tsx --test test/*.test.ts",
     "models:update": "node scripts/update-models.mjs",
     "logo:render": "bash scripts/render-logo.sh",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "keywords": [
@@ -39,9 +40,13 @@
   ],
   "author": "Geetank",
   "license": "MIT",
+  "homepage": "https://github.com/Geetank/surfcode#readme",
+  "bugs": {
+    "url": "https://github.com/Geetank/surfcode/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/surfcode/surfcode.git"
+    "url": "https://github.com/Geetank/surfcode.git"
   },
   "dependencies": {
     "chalk": "^6.0.1",
