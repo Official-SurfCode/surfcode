@@ -2569,11 +2569,15 @@ Answer the question directly and concisely in GitHub-flavored Markdown. This exc
             return;
           }
           if (currentOverlay.kind === 'provider') {
-            const provider = providerForPicker(catalog, credentials, currentOverlay.query, selectedOverlayIndex);
+            // Resolve from the rendered list so Enter always activates the
+            // highlighted row, even if the display sort ever changes.
+            const item = providerItems[selectedOverlayIndex];
+            const provider = item ? providerById(catalog, item.id) : undefined;
             if (provider) selectProvider(provider);
             return;
           }
-          const record = sessionForPicker(sessions, currentOverlay.query, selectedOverlayIndex);
+          const item = sessionItems[selectedOverlayIndex];
+          const record = item ? sessions.find((entry) => entry.id === item.id) : undefined;
           if (record) void resumeSession(record);
           return;
         }
@@ -3279,37 +3283,6 @@ function modelEntryForPicker(
     .filter((entry) => tokens.every((token) => entry.search.includes(token)))
     .slice(0, 2500);
   return filtered[selected];
-}
-
-function providerForPicker(
-  catalog: Catalog,
-  credentials: Map<string, CredentialStatus>,
-  query: string,
-  selected: number
-): CatalogProvider | undefined {
-  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const providers = [...catalog.providers].sort((a, b) => {
-    const aReady = credentials.get(a.id)?.configured ? 1 : 0;
-    const bReady = credentials.get(b.id)?.configured ? 1 : 0;
-    if (aReady !== bReady) return bReady - aReady;
-    return a.name.localeCompare(b.name);
-  });
-  return providers
-    .filter((provider) => tokens.every((token) => `${provider.id} ${provider.name}`.toLowerCase().includes(token)))
-    .slice(0, 500)[selected];
-}
-
-function sessionForPicker(
-  sessions: SessionRecord[],
-  query: string,
-  selected: number
-): SessionRecord | undefined {
-  const normalized = query.trim().toLowerCase();
-  return sessions
-    .filter((record) => {
-      if (!normalized) return true;
-      return `${record.title} ${record.provider} ${record.model} ${record.cwd}`.toLowerCase().includes(normalized);
-    })[selected];
 }
 
 function padBlock(lines: string[], height: number, width: number): string[] {

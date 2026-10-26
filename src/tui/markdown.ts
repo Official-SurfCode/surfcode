@@ -18,14 +18,34 @@ export function sanitizeTerminal(text: string): string {
     .replace(/\t/g, '  ');
 }
 
+// Rendering markdown is the TUI's hottest path: while a reply streams in, the
+// whole text is re-rendered on every spinner frame. Results are pure, so a
+// small LRU keyed on the exact input turns repeated frames into cache hits.
+const RENDER_CACHE_LIMIT = 48;
+const renderCache = new Map<string, string[]>();
+
 export function renderMarkdown(markdown: string, width: number, theme: Theme): string[] {
   const safe = sanitizeTerminal(markdown);
   if (!safe.trim()) return [];
+  const key = `${theme.name}\u0000${width}\u0000${safe}`;
+  const cached = renderCache.get(key);
+  if (cached) {
+    // Re-insert to keep the entry fresh under LRU eviction.
+    renderCache.delete(key);
+    renderCache.set(key, cached);
+    return cached;
+  }
   const tokens = marked.lexer(safe);
   const context: RenderContext = { out: [], width: Math.max(10, width), indent: 0, theme };
   renderBlocks(tokens, context);
   trimBlank(context.out);
-  return context.out;
+  const lines = context.out;
+  renderCache.set(key, lines);
+  if (renderCache.size > RENDER_CACHE_LIMIT) {
+    const oldest = renderCache.keys().next().value;
+    if (oldest !== undefined) renderCache.delete(oldest);
+  }
+  return lines;
 }
 
 function renderBlocks(tokens: Token[], context: RenderContext): void {

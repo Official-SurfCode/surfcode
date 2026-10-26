@@ -111,6 +111,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentOutcome> {
   const schemas = toolsEnabled ? toolSchemas(activeTools) : [];
   let aborted = false;
   let todos: TodoItem[] = [];
+  let emptyRetries = 0;
 
   for (let step = 1; step <= maxSteps; step += 1) {
     if (signal.aborted) {
@@ -160,6 +161,13 @@ export async function runAgent(options: AgentOptions): Promise<AgentOutcome> {
         }
         break;
       }
+      if (error instanceof Error && error.name === 'TimeoutError') {
+        throw new SurfError('The provider did not finish the request in time and it was aborted.', {
+          hint: 'Try again, switch models with /model, or raise providers.<id>.settings.timeout in the config.',
+          cause: error,
+          retryable: true
+        });
+      }
       throw error;
     }
 
@@ -191,6 +199,15 @@ export async function runAgent(options: AgentOptions): Promise<AgentOutcome> {
           role: 'assistant',
           content: '_Response reached the output limit. Ask me to continue if you need the rest._'
         });
+        break;
+      }
+      // An empty response (provider hiccup, content filter, dropped stream)
+      // used to end the turn silently. Nudge the model once so the task
+      // continues instead of appearing to stop for no reason.
+      if (!result.text && !result.reasoning && !aborted && step < maxSteps && emptyRetries < 1) {
+        emptyRetries += 1;
+        messages.push({ role: 'user', content: '(Your previous reply was empty. Continue the task.)' });
+        continue;
       }
       break;
     }
