@@ -4,6 +4,8 @@ export interface Theme {
   description: string;
   /** Fill the whole frame with this color. Only dark mode opts into it. */
   background?: string;
+  /** Subtle fill behind the composer panel. */
+  panel?: string;
   accent: string;
   accent2: string;
   accent3: string;
@@ -28,6 +30,7 @@ const AURORA: Theme = {
   name: 'aurora',
   label: 'Aurora',
   description: 'deep blue, ice, and electric cyan',
+  panel: '#0B1220',
   accent: '#60A5FA',
   accent2: '#38BDF8',
   accent3: '#22D3EE',
@@ -53,6 +56,7 @@ const DARK: Theme = {
   label: 'Dark',
   description: 'pure black canvas with electric blue and vivid accents',
   background: '#000000',
+  panel: '#0E1118',
   accent: '#60A5FA',
   accent2: '#A78BFA',
   accent3: '#22D3EE',
@@ -77,6 +81,7 @@ const EMBER: Theme = {
   name: 'ember',
   label: 'Ember',
   description: 'warm orange sunsets over dark water',
+  panel: '#1A100C',
   accent: '#FB923C',
   accent2: '#F43F5E',
   accent3: '#FDE047',
@@ -101,6 +106,7 @@ const FOREST: Theme = {
   name: 'forest',
   label: 'Forest',
   description: 'moss, mint, and quiet terminal energy',
+  panel: '#08150F',
   accent: '#6EE7B7',
   accent2: '#34D399',
   accent3: '#A3E635',
@@ -125,6 +131,7 @@ const VIOLET: Theme = {
   name: 'violet',
   label: 'Violet',
   description: 'electric lilac with synthwave edges',
+  panel: '#140D21',
   accent: '#C084FC',
   accent2: '#818CF8',
   accent3: '#F472B6',
@@ -149,6 +156,7 @@ const MONO: Theme = {
   name: 'mono',
   label: 'Mono',
   description: 'ink, graphite, and clean lines',
+  panel: '#14181D',
   accent: '#F1F5F9',
   accent2: '#CBD5E1',
   accent3: '#94A3B8',

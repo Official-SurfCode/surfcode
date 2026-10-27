@@ -2,6 +2,7 @@ import type { Theme } from './theme.js';
 import { ICONS } from './icons.js';
 import { VERSION } from '../version.js';
 import {
+  bg,
   center,
   chalk,
   dim,
@@ -180,6 +181,113 @@ export function renderInput(options: InputOptions, width: number): InputRender {
     : `${fg(borderColor, '╰')}${fg(borderColor, '─'.repeat(Math.max(1, width - 2)))}${fg(borderColor, '╯')}`;
   lines.push(bottom);
   return { lines, contentRows: Math.max(1, end - start) };
+}
+
+export type ComposerState = StatusInfo['state'];
+
+export interface ComposerOptions {
+  value: string;
+  cursor: number;
+  placeholder: string;
+  theme: Theme;
+  focused: boolean;
+  mode: 'build' | 'plan';
+  model?: string;
+  /** Current agent state; drives the activity line above the panel. */
+  state?: ComposerState;
+  secret?: boolean;
+  maxRows?: number;
+}
+
+export interface ComposerRender {
+  lines: string[];
+  contentRows: number;
+  /** Number of lines occupied by the bordered panel itself. */
+  inputRows: number;
+}
+
+/** Human-readable agent state for the compact line above the composer. */
+export function composerActivity(state: ComposerState = 'ready'): string {
+  switch (state) {
+    case 'permission':
+      return 'Waiting for approval…';
+    case 'stopping':
+      return 'Stopping…';
+    case 'sync':
+      return 'Syncing…';
+    case 'thinking':
+      return 'Thinking…';
+    case 'streaming':
+      return 'Writing…';
+    case 'tool':
+      return 'Working…';
+    case 'error':
+      return 'Something went wrong';
+    default:
+      return 'Ready';
+  }
+}
+
+/**
+ * Codex-style chat composer: an activity line, a mode/model line, then a
+ * roomy filled input panel. The version stays visible in the header so it can
+ * be checked without opening help.
+ */
+export function renderComposer(options: ComposerOptions, width: number): ComposerRender {
+  const { theme, mode } = options;
+  const state = options.state ?? 'ready';
+  const version = `v${VERSION}`;
+  const lines: string[] = [];
+
+  const activityColor = state === 'ready' ? theme.dim : state === 'error' ? theme.error : theme.text;
+  const activity = `${fg(theme.accent, '~')} ${fg(activityColor, composerActivity(state))}`;
+  const versionWidth = visibleWidth(version);
+  if (width <= versionWidth) {
+    lines.push(fit(dim(version), width));
+  } else {
+    const activityWidth = width - versionWidth - 1;
+    lines.push(`${fit(activity, activityWidth)} ${dim(version)}`);
+  }
+
+  const modeLabel = mode === 'plan' ? 'Plan' : 'Build';
+  const modeColor = mode === 'plan' ? theme.warning : theme.accent2;
+  const modelLabel = options.model
+    ? `${dim(ICONS.bullet)} ${fg(theme.text, truncate(options.model, Math.max(8, width - 14)))}`
+    : `${dim(ICONS.bullet)} ${dim('no model selected')}`;
+  const modeLine = `${fg(modeColor, `${ICONS.selected} ${modeLabel}`)} ${modelLabel}`;
+  lines.push(fit(modeLine, width));
+
+  const input = renderInput(
+    {
+      value: options.value,
+      cursor: options.cursor,
+      placeholder: options.placeholder,
+      theme,
+      focused: options.focused,
+      secret: options.secret,
+      maxRows: options.maxRows ?? 6,
+      variant: 'minimal'
+    },
+    width
+  );
+
+  const borderColor = options.focused ? theme.accent2 : theme.border;
+  const panelLines = input.lines.slice(0, -1);
+  const bottom = input.lines[input.lines.length - 1] ?? '';
+  // One breathing row under the text, even for a single-line prompt.
+  panelLines.push(`${fg(borderColor, '│')}${' '.repeat(Math.max(0, width - 2))}${fg(borderColor, '│')}`);
+  panelLines.push(bottom);
+
+  const paint = (line: string): string => {
+    const padded = fit(line, width);
+    return theme.panel ? bg(theme.panel, padded) : padded;
+  };
+
+  return {
+    lines: [...lines, ...panelLines.map(paint)],
+    contentRows: input.contentRows,
+    inputRows: panelLines.length
+  };
 }
 
 export interface StatusInfo {

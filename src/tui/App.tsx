@@ -77,7 +77,7 @@ import {
   type ExplorerEntry,
   type ExplorerPreview
 } from './explorer.js';
-import { BRAND_FRAME_MS, BRAND_WIDTH, brandTick, renderBrand, renderHero, renderInput, renderStatus, type StatusInfo } from './layout.js';
+import { BRAND_FRAME_MS, BRAND_WIDTH, brandTick, renderBrand, renderComposer, renderHero, renderInput, renderStatus, type StatusInfo } from './layout.js';
 import {
   renderBtwOverlay,
   renderConnectInfo,
@@ -3141,15 +3141,17 @@ Answer the question directly and concisely in GitHub-flavored Markdown. This exc
       statusLine
     ];
   } else {
-    const inputRender = renderInput(
+    const inputRender = renderComposer(
       {
         value: input,
         cursor,
         placeholder: input.startsWith('!') ? 'Run a shell command…' : 'Ask anything…',
         theme,
         focused: !explorerFocused,
-        maxRows: 6,
-        variant: 'minimal'
+        mode: config.mode,
+        model: activeModelName || undefined,
+        state: statusState,
+        maxRows: 6
       },
       mainWidth
     );

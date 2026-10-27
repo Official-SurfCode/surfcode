@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import stripAnsi from 'strip-ansi';
 import { bg, chalk, shimmer, visibleWidth } from '../src/tui/ansi.js';
-import { renderHero, renderInput, renderStatus, type HeroInfo } from '../src/tui/layout.js';
+import { renderComposer, renderHero, renderInput, renderStatus, type HeroInfo } from '../src/tui/layout.js';
+import { VERSION } from '../src/version.js';
 import { renderBtwOverlay, renderGithubInfo, renderPicker } from '../src/tui/overlays.js';
 import { getTheme, nextTheme, THEMES } from '../src/tui/theme.js';
 
@@ -64,6 +65,66 @@ test('main prompt is a simple rounded box without title or hint', () => {
   assert.ok(!plain.join('\n').includes('ignored title'));
   assert.ok(!plain.join('\n').includes('ignored hint'));
   assert.ok(box.lines.every((line) => visibleWidth(line) === 80));
+});
+
+test('composer shows activity, mode, model, and version above a roomy panel', () => {
+  const composer = renderComposer(
+    {
+      value: '',
+      cursor: 0,
+      placeholder: 'Ask anything…',
+      theme,
+      focused: true,
+      mode: 'build',
+      model: 'gpt-5.1-codex',
+      state: 'thinking'
+    },
+    80
+  );
+  const plain = composer.lines.map((line) => stripAnsi(line));
+  assert.equal(composer.lines.length, 6);
+  assert.equal(composer.inputRows, 4);
+  assert.match(plain[0]!, /^~ Thinking…/);
+  assert.ok(plain[0]!.includes(`v${VERSION}`));
+  assert.match(plain[1]!, /▌ Build · gpt-5\.1-codex/);
+  assert.ok(plain[2]!.startsWith('╭────'));
+  assert.match(plain[3]!, /❯\s+Ask anything…/);
+  assert.equal(plain[4]!.slice(1, -1).trim(), '');
+  assert.ok(plain[5]!.startsWith('╰────'));
+  assert.ok(composer.lines.every((line) => visibleWidth(line) === 80));
+});
+
+test('composer activity reflects plan mode and busy states', () => {
+  const plan = renderComposer(
+    {
+      value: 'ship it',
+      cursor: 7,
+      placeholder: 'Ask anything…',
+      theme,
+      focused: false,
+      mode: 'plan',
+      state: 'tool'
+    },
+    64
+  ).lines.map((line) => stripAnsi(line));
+  assert.match(plan[0]!, /~ Working…/);
+  assert.match(plan[1]!, /▌ Plan · no model selected/);
+  assert.ok(plan.every((line) => visibleWidth(line) <= 64));
+  for (const width of [8, 16, 40, 120]) {
+    const narrow = renderComposer(
+      {
+        value: '',
+        cursor: 0,
+        placeholder: 'Ask anything…',
+        theme,
+        focused: true,
+        mode: 'build',
+        model: 'gpt-5.1-codex'
+      },
+      width
+    );
+    assert.ok(narrow.lines.every((line) => visibleWidth(line) === width));
+  }
 });
 
 test('titled prompt keeps its title and hint inside the border', () => {
