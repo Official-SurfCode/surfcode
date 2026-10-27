@@ -3,6 +3,8 @@ import { anthropicThinkingBudget } from '../effort.js';
 import { SurfError } from '../errors.js';
 import type { ChatRequest } from './types.js';
 import {
+  DEFAULT_IDLE_TIMEOUT,
+  DEFAULT_RESPONSE_TIMEOUT,
   baseHeaders,
   emptyResult,
   fetchWithRetry,
@@ -20,6 +22,9 @@ export async function streamAnthropic(request: ChatRequest): Promise<ChatResult>
   const { provider, model, options, callbacks } = request;
   const result = emptyResult();
   const signal = requestSignal(options);
+  const responseTimeout =
+    options.responseTimeout ?? provider.settings.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT;
+  const idleTimeout = options.idleTimeout ?? provider.settings.idleTimeout ?? DEFAULT_IDLE_TIMEOUT;
   const body: Record<string, unknown> = {
     ...(provider.settings.extraBody ?? {}),
     model: model.id,
@@ -55,14 +60,15 @@ export async function streamAnthropic(request: ChatRequest): Promise<ChatResult>
     },
     signal,
     retryAttempts(provider.settings),
-    retryBaseDelay(provider.settings)
+    retryBaseDelay(provider.settings),
+    responseTimeout
   );
 
   const blocks = new Map<number, { id: string; name: string; raw: string }>();
   const thinkingBlocks = new Map<number, ThinkingBlock>();
   const usage: Partial<Usage> = {};
 
-  for await (const event of readSse(response)) {
+  for await (const event of readSse(response, idleTimeout, signal)) {
     const payload = parseJson(event.data);
     if (!payload) continue;
     const type = payload.type ?? event.event;

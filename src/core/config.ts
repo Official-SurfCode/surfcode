@@ -19,6 +19,8 @@ const providerSettingsSchema = z.object({
   location: z.string().optional(),
   extraBody: z.record(z.string(), z.unknown()).optional(),
   timeout: z.number().positive().optional(),
+  responseTimeout: z.number().int().positive().max(600_000).optional(),
+  idleTimeout: z.number().int().positive().max(600_000).optional(),
   retries: z.number().int().min(0).max(10).optional(),
   retryDelay: z.number().int().min(0).max(60_000).optional(),
   keyless: z.boolean().optional()

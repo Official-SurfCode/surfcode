@@ -387,6 +387,8 @@ Useful provider settings:
 | `headers` | Extra HTTP headers |
 | `extraBody` | Extra JSON merged into each request body |
 | `timeout` | Request timeout in milliseconds |
+| `responseTimeout` | Milliseconds to wait for response headers before failing fast (default `45000`) |
+| `idleTimeout` | Milliseconds of stream silence before aborting (default `90000`) |
 | `retries` | Extra attempts after the first request (default `2`) |
 | `retryDelay` | Base exponential backoff in milliseconds (default `600`) |
 | `keyless` | No API key required |

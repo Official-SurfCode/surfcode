@@ -15,12 +15,65 @@ export interface StreamOptions {
   /** Ask providers that support summaries to return reasoning text. */
   showReasoning?: boolean;
   timeout?: number;
+  /** Maximum wait for response headers before failing fast. */
+  responseTimeout?: number;
+  /** Maximum silence between SSE chunks before aborting a stalled stream. */
+  idleTimeout?: number;
 }
 
 export const DEFAULT_TIMEOUT = 10 * 60 * 1000;
+/** Time allowed for response headers before the provider is considered stalled. */
+export const DEFAULT_RESPONSE_TIMEOUT = 45 * 1000;
+/** Time allowed between SSE chunks before an active stream is considered dead. */
+export const DEFAULT_IDLE_TIMEOUT = 90 * 1000;
 // 429 is deliberately absent: quota/rate-limit responses will not succeed by
 // waiting a few seconds, and retrying them made provider errors feel silent.
 export const RETRYABLE_STATUS = new Set([408, 409, 425, 500, 502, 503, 504]);
+
+function responseTimeoutError(timeoutMs: number, cause?: unknown): SurfError {
+  const seconds = Math.max(1, Math.round(timeoutMs / 1000));
+  return new SurfError(`The provider did not start responding within ${seconds}s.`, {
+    hint: 'The model may be overloaded or unavailable on your plan. Switch models with /model, lower /effort, or raise providers.<id>.settings.responseTimeout.',
+    cause,
+    retryable: false
+  });
+}
+
+function idleTimeoutError(timeoutMs: number): SurfError {
+  const seconds = Math.max(1, Math.round(timeoutMs / 1000));
+  return new SurfError(`The provider stopped sending data for ${seconds}s.`, {
+    hint: 'The stream stalled. Switch models with /model, lower /effort, or raise providers.<id>.settings.idleTimeout.',
+    retryable: false
+  });
+}
+
+async function fetchWithHeaderTimeout(
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal,
+  timeoutMs: number
+): Promise<Response> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return fetch(url, { ...init, signal });
+  const controller = new AbortController();
+  if (signal.aborted) throw signal.reason ?? new Error('Aborted');
+  const forwardAbort = () => controller.abort(signal.reason);
+  signal.addEventListener('abort', forwardAbort, { once: true });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  timer.unref?.();
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) throw responseTimeoutError(timeoutMs, error);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', forwardAbort);
+  }
+}
 
 export function requestSignal(options: StreamOptions): AbortSignal {
   const timeout = AbortSignal.timeout(options.timeout ?? DEFAULT_TIMEOUT);
@@ -32,7 +85,8 @@ export async function fetchWithRetry(
   init: RequestInit,
   signal: AbortSignal,
   attempts = 3,
-  baseDelay = 600
+  baseDelay = 600,
+  responseTimeout = DEFAULT_RESPONSE_TIMEOUT
 ): Promise<Response> {
   let lastError: unknown;
   const tries = Math.max(1, attempts);
@@ -40,9 +94,12 @@ export async function fetchWithRetry(
     if (signal.aborted) throw signal.reason ?? new Error('Aborted');
     let response: Response;
     try {
-      response = await fetch(url, { ...init, signal });
+      response = await fetchWithHeaderTimeout(url, init, signal, responseTimeout);
     } catch (error) {
       if (signal.aborted) throw error;
+      // A stalled response will not be fixed by an immediate replay. Surface
+      // it at once so the TUI does not look like it is thinking forever.
+      if (error instanceof SurfError && !error.retryable) throw error;
       lastError = error;
       if (attempt === tries - 1) break;
       await sleepWithSignal(backoffMs(attempt, baseDelay), signal);
@@ -109,41 +166,102 @@ export async function throwResponseError(response: Response): Promise<never> {
 }
 
 export async function* readSse(
-  response: Response
+  response: Response,
+  idleTimeout = DEFAULT_IDLE_TIMEOUT,
+  signal?: AbortSignal
 ): AsyncGenerator<{ event?: string; data: string }, void, unknown> {
   if (!response.body) throw new SurfError('Provider returned an empty response body.');
+  const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let event: string | undefined;
   let data: string[] = [];
+  let completed = false;
 
-  for await (const chunk of response.body as any as AsyncIterable<Uint8Array>) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let newline = buffer.indexOf('\n');
-    while (newline !== -1) {
-      let line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      if (line.endsWith('\r')) line = line.slice(0, -1);
-
-      if (line === '') {
-        if (data.length > 0) {
-          yield { event, data: data.join('\n') };
-          data = [];
-        }
-        event = undefined;
-      } else if (line.startsWith(':')) {
-        // comment / keepalive
-      } else if (line.startsWith('event:')) {
-        event = line.slice(6).trim();
-      } else if (line.startsWith('data:')) {
-        data.push(line.slice(5).trimStart());
+  try {
+    while (true) {
+      const chunk = await readChunk(reader, idleTimeout, signal);
+      if (chunk.done) {
+        completed = true;
+        break;
       }
-      newline = buffer.indexOf('\n');
+      buffer += decoder.decode(chunk.value, { stream: true });
+      let newline = buffer.indexOf('\n');
+      while (newline !== -1) {
+        let line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (line.endsWith('\r')) line = line.slice(0, -1);
+
+        if (line === '') {
+          if (data.length > 0) {
+            yield { event, data: data.join('\n') };
+            data = [];
+          }
+          event = undefined;
+        } else if (line.startsWith(':')) {
+          // comment / keepalive
+        } else if (line.startsWith('event:')) {
+          event = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          data.push(line.slice(5).trimStart());
+        }
+        newline = buffer.indexOf('\n');
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.startsWith('data:')) data.push(buffer.slice(5).trimStart());
+    if (data.length > 0) yield { event, data: data.join('\n') };
+  } finally {
+    if (!completed) {
+      try {
+        await reader.cancel();
+      } catch {
+        // The connection may already be closed.
+      }
+    }
+    reader.releaseLock();
+  }
+}
+
+async function readChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleTimeout: number,
+  signal?: AbortSignal
+) {
+  if (signal?.aborted) throw signal.reason ?? new Error('Aborted');
+  if (!Number.isFinite(idleTimeout) || idleTimeout <= 0) return reader.read();
+  let timer: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  let onAbort: (() => void) | undefined;
+  const abort = signal
+    ? new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+        signal.addEventListener('abort', onAbort, { once: true });
+      })
+    : undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      ...(abort ? [abort] : []),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(idleTimeoutError(idleTimeout));
+        }, idleTimeout);
+        timer.unref?.();
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+    if (timedOut || signal?.aborted) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Ignore cancellation errors; the timeout or abort is the useful failure.
+      }
     }
   }
-  buffer += decoder.decode();
-  if (buffer.startsWith('data:')) data.push(buffer.slice(5).trimStart());
-  if (data.length > 0) yield { event, data: data.join('\n') };
 }
 
 export function tryParseJson(value: string): unknown {

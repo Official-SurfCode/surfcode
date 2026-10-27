@@ -696,6 +696,65 @@ describe('streaming dialects', () => {
     assert.equal(calls, 1);
   });
 
+  test('fails fast when a provider never sends response headers', async () => {
+    let calls = 0;
+    const baseURL = await serve((_request, response) => {
+      calls += 1;
+      // Hold the request open without sending headers, as an overloaded
+      // upstream does. The test timeout is 100ms, far below this cleanup.
+      setTimeout(() => response.destroy(), 500);
+    });
+    const provider = providerFor('google', 'google', baseURL, { 'x-goog-api-key': 'test-key' });
+    provider.settings = { retries: 2, retryDelay: 1, responseTimeout: 100 };
+    const model = modelFor(provider, 'gemini-test');
+    const { request } = requestFor(provider, model);
+    const startedAt = Date.now();
+
+    await assert.rejects(
+      () => streamChat(request),
+      (error: unknown) => {
+        assert.ok(error instanceof SurfError);
+        assert.match(error.message, /did not start responding within 1s/i);
+        assert.match(error.hint ?? '', /Switch models/i);
+        assert.equal(error.retryable, false);
+        return true;
+      }
+    );
+    assert.equal(calls, 1);
+    assert.ok(Date.now() - startedAt < 1_000);
+  });
+
+  test('aborts an SSE stream that stalls after the headers arrive', async () => {
+    let calls = 0;
+    const baseURL = await serve((_request, response) => {
+      calls += 1;
+      response.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive'
+      });
+      response.flushHeaders();
+      response.write(': keepalive\n\n');
+      setTimeout(() => response.destroy(), 500);
+    });
+    const provider = providerFor('openai', 'openai', baseURL, { authorization: 'Bearer test-key' });
+    provider.settings = { retries: 2, retryDelay: 1, responseTimeout: 1_000, idleTimeout: 100 };
+    const model = modelFor(provider, 'gpt-test');
+    const { request } = requestFor(provider, model);
+
+    await assert.rejects(
+      () => streamChat(request),
+      (error: unknown) => {
+        assert.ok(error instanceof SurfError);
+        assert.match(error.message, /stopped sending data for 1s/i);
+        assert.match(error.hint ?? '', /stalled|switch models/i);
+        assert.equal(error.retryable, false);
+        return true;
+      }
+    );
+    assert.equal(calls, 1);
+  });
+
   test('retries a request timeout that happens before any content', async () => {
     let calls = 0;
     const baseURL = await serve((_request, response) => {

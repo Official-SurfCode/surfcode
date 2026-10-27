@@ -3,6 +3,8 @@ import { supportsOpenAiEffort } from '../effort.js';
 import { SurfError } from '../errors.js';
 import type { ChatRequest } from './types.js';
 import {
+  DEFAULT_IDLE_TIMEOUT,
+  DEFAULT_RESPONSE_TIMEOUT,
   baseHeaders,
   emptyResult,
   fetchWithRetry,
@@ -24,6 +26,9 @@ export async function streamOpenAi(request: ChatRequest, endpoint?: string): Pro
   const { provider, model, options, callbacks } = request;
   const result = emptyResult();
   const signal = requestSignal(options);
+  const responseTimeout =
+    options.responseTimeout ?? provider.settings.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT;
+  const idleTimeout = options.idleTimeout ?? provider.settings.idleTimeout ?? DEFAULT_IDLE_TIMEOUT;
   const body: Record<string, unknown> = {
     ...(provider.settings.extraBody ?? {}),
     model: model.id,
@@ -74,7 +79,7 @@ export async function streamOpenAi(request: ChatRequest, endpoint?: string): Pro
   } satisfies RequestInit;
   let response: Response;
   try {
-    response = await fetchWithRetry(url, init, signal, attempts, delay);
+    response = await fetchWithRetry(url, init, signal, attempts, delay, responseTimeout);
   } catch (error) {
     // A handful of OpenAI-compatible servers reject stream_options instead of ignoring it.
     if (
@@ -89,7 +94,8 @@ export async function streamOpenAi(request: ChatRequest, endpoint?: string): Pro
         { ...init, body: JSON.stringify(body) },
         signal,
         attempts,
-        delay
+        delay,
+        responseTimeout
       );
     } else {
       throw error;
@@ -99,7 +105,7 @@ export async function streamOpenAi(request: ChatRequest, endpoint?: string): Pro
   const callParts = new Map<number, { id: string; name: string; raw: string }>();
   let usage: Partial<Usage> = {};
 
-  for await (const event of readSse(response)) {
+  for await (const event of readSse(response, idleTimeout, signal)) {
     if (event.data === '[DONE]') break;
     const payload = parseJson(event.data);
     if (!payload) continue;

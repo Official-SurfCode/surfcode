@@ -71,6 +71,10 @@ export interface ProviderSettings {
   extraBody?: Record<string, unknown>;
   /** Milliseconds. */
   timeout?: number;
+  /** Milliseconds to wait for response headers before failing fast. */
+  responseTimeout?: number;
+  /** Milliseconds of stream silence before aborting. */
+  idleTimeout?: number;
   /** Extra retry attempts after the first request. Defaults to 2. */
   retries?: number;
   /** Base backoff in milliseconds. Defaults to 600. */

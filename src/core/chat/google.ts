@@ -3,6 +3,8 @@ import { googleThinkingControl } from '../effort.js';
 import { SurfError } from '../errors.js';
 import type { ChatRequest } from './types.js';
 import {
+  DEFAULT_IDLE_TIMEOUT,
+  DEFAULT_RESPONSE_TIMEOUT,
   baseHeaders,
   emptyResult,
   fetchWithRetry,
@@ -19,6 +21,9 @@ export async function streamGoogle(request: ChatRequest): Promise<ChatResult> {
   const { provider, model, options, callbacks } = request;
   const result = emptyResult();
   const signal = requestSignal(options);
+  const responseTimeout =
+    options.responseTimeout ?? provider.settings.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT;
+  const idleTimeout = options.idleTimeout ?? provider.settings.idleTimeout ?? DEFAULT_IDLE_TIMEOUT;
   const thinking =
     options.effort && model.meta?.reasoning === true
       ? googleThinkingControl(model.id, options.effort, options.maxTokens)
@@ -65,13 +70,14 @@ export async function streamGoogle(request: ChatRequest): Promise<ChatResult> {
     },
     signal,
     retryAttempts(provider.settings),
-    retryBaseDelay(provider.settings)
+    retryBaseDelay(provider.settings),
+    responseTimeout
   );
 
   const providerParts: ProviderPart[] = [];
   let signed = false;
 
-  for await (const event of readSse(response)) {
+  for await (const event of readSse(response, idleTimeout, signal)) {
     const payload = parseJson(event.data);
     if (!payload) continue;
     if (payload.error) {
