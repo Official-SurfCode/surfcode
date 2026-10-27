@@ -1,6 +1,6 @@
 {
   "name": "surfcode",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "SurfCode — a beautiful, provider-agnostic AI coding agent for your terminal.",
   "type": "module",
   "bin": {
@@ -46,7 +46,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Official-SurfCode/surfcode.git"
+    "url": "git+https://github.com/Official-SurfCode/surfcode.git"
   },
   "dependencies": {
     "chalk": "^6.0.1",
