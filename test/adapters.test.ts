@@ -282,6 +282,71 @@ describe('streaming dialects', () => {
     assert.deepEqual(reasoning, ['Thinking.']);
   });
 
+  test('Google replays a thought signature attached to an empty text part', async () => {
+    let calls = 0;
+    const baseURL = await serve((_request, response) => {
+      calls += 1;
+      if (calls === 1) {
+        sse(response, [
+          {
+            data: JSON.stringify({
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      { text: '', thoughtSignature: 'sig-empty' },
+                      { functionCall: { name: 'read', args: { path: 'hello.txt' } } }
+                    ]
+                  },
+                  finishReason: 'STOP'
+                }
+              ]
+            })
+          }
+        ]);
+        return;
+      }
+      sse(response, [
+        {
+          data: JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'done' }] }, finishReason: 'STOP' }]
+          })
+        }
+      ]);
+    });
+    const provider = providerFor('google', 'google', baseURL, { 'x-goog-api-key': 'test-key' });
+    const model = modelFor(provider, 'gemini-test');
+    const { request } = requestFor(provider, model);
+    const first = await streamChat(request);
+
+    assert.deepEqual(first.providerParts, [
+      { text: '', thoughtSignature: 'sig-empty' },
+      { functionCall: { name: 'read', args: { path: 'hello.txt' } } }
+    ]);
+    const call = first.toolCalls[0]!;
+
+    const { request: second } = requestFor(provider, model, {
+      messages: [
+        { role: 'user', content: 'read hello.txt' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [call],
+          providerParts: first.providerParts
+        },
+        { role: 'tool', toolCallId: call.id, name: 'read', content: 'hello' }
+      ]
+    });
+    await streamChat(second);
+
+    const contents = captured.at(-1)?.body?.contents as Array<Record<string, any>>;
+    const modelTurn = contents.find((entry) => entry.role === 'model');
+    assert.deepEqual(modelTurn?.parts?.[0], { text: '', thoughtSignature: 'sig-empty' });
+    assert.deepEqual(modelTurn?.parts?.[1], {
+      functionCall: { name: 'read', args: { path: 'hello.txt' } }
+    });
+  });
+
   test('OpenAI sends reasoning_effort for reasoning models', async () => {
     const baseURL = await serve((_request, response) => {
       sse(response, [
@@ -689,6 +754,90 @@ describe('streaming dialects', () => {
     assert.equal(calls, 2);
     assert.equal(result.text, 'second try');
     assert.deepEqual(text, ['second try']);
+  });
+
+  test('retries a completed response that contains no text or tool calls', async () => {
+    let calls = 0;
+    const baseURL = await serve((_request, response) => {
+      calls += 1;
+      if (calls === 1) {
+        sse(response, [
+          { data: JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) },
+          { data: '[DONE]' }
+        ]);
+        return;
+      }
+      sse(response, [
+        { data: JSON.stringify({ choices: [{ delta: { content: 'after retry' }, finish_reason: 'stop' }] }) },
+        { data: '[DONE]' }
+      ]);
+    });
+    const provider = providerFor('openai', 'openai', baseURL, { authorization: 'Bearer test-key' });
+    provider.settings = { retries: 1, retryDelay: 1 };
+    const model = modelFor(provider, 'gpt-test');
+    const { request, text } = requestFor(provider, model);
+    const result = await streamChat(request);
+
+    assert.equal(calls, 2);
+    assert.equal(result.text, 'after retry');
+    assert.deepEqual(text, ['after retry']);
+  });
+
+  test('reports a persistent empty reply with the finish reason instead of stopping silently', async () => {
+    let calls = 0;
+    const baseURL = await serve((_request, response) => {
+      calls += 1;
+      sse(response, [
+        { data: JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) },
+        { data: '[DONE]' }
+      ]);
+    });
+    const provider = providerFor('openai', 'openai', baseURL, { authorization: 'Bearer test-key' });
+    provider.settings = { retries: 1, retryDelay: 1 };
+    const model = modelFor(provider, 'gpt-test');
+    const { request } = requestFor(provider, model);
+
+    await assert.rejects(
+      () => streamChat(request),
+      (error: unknown) => {
+        assert.ok(error instanceof SurfError);
+        assert.match(error.message, /returned an empty reply/i);
+        assert.match(error.message, /finish reason: stop/i);
+        assert.match(error.hint ?? '', /switch models|try again/i);
+        return true;
+      }
+    );
+    assert.equal(calls, 2);
+  });
+
+  test('returns Google MAX_TOKENS with no visible text for agent diagnostics', async () => {
+    let calls = 0;
+    const baseURL = await serve((_request, response) => {
+      calls += 1;
+      sse(response, [
+        {
+          data: JSON.stringify({
+            candidates: [
+              {
+                content: { parts: [] },
+                finishReason: 'MAX_TOKENS'
+              }
+            ],
+            usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 0, thoughtsTokenCount: 96 }
+          })
+        }
+      ]);
+    });
+    const provider = providerFor('google', 'google', baseURL, { 'x-goog-api-key': 'test-key' });
+    provider.settings = { retries: 2, retryDelay: 1 };
+    const model = modelFor(provider, 'gemini-test');
+    const { request } = requestFor(provider, model);
+    const result = await streamChat(request);
+
+    assert.equal(calls, 1);
+    assert.equal(result.finishReason, 'MAX_TOKENS');
+    assert.equal(result.text, '');
+    assert.equal(result.usage.reasoningTokens, 96);
   });
 
   test('does not replay a stream after partial text reached the UI', async () => {

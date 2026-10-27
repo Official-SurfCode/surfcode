@@ -174,6 +174,71 @@ export function emptyResult(): ChatResult {
   return { text: '', reasoning: '', toolCalls: [], usage: {} };
 }
 
+/** Normalize provider-specific finish reasons for case-insensitive checks. */
+export function normalizeFinishReason(reason: string | undefined): string {
+  return (reason ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+/**
+ * Treat every provider spelling of an output cap the same way. Google reports
+ * `MAX_TOKENS`, Anthropic `max_tokens`, and OpenAI `length`.
+ */
+export function isLengthFinishReason(reason: string | undefined): boolean {
+  const normalized = normalizeFinishReason(reason);
+  return (
+    normalized === 'length' ||
+    normalized === 'max_tokens' ||
+    normalized === 'max_output_tokens' ||
+    normalized === 'model_context_window_exceeded'
+  );
+}
+
+const BLOCKED_FINISH_REASONS = new Set([
+  'content_filter',
+  'safety',
+  'recitation',
+  'blocklist',
+  'prohibited_content',
+  'spii',
+  'refusal',
+  'malformed_function_call',
+  'image_safety',
+  'language'
+]);
+
+export function isBlockedFinishReason(reason: string | undefined): boolean {
+  return BLOCKED_FINISH_REASONS.has(normalizeFinishReason(reason));
+}
+
+/** True when a response contains anything worth showing or replaying. */
+export function hasAssistantContent(
+  result: Pick<ChatResult, 'text' | 'reasoning' | 'toolCalls'>
+): boolean {
+  return Boolean(result.text.trim() || result.reasoning.trim() || result.toolCalls.length > 0);
+}
+
+/**
+ * Providers occasionally complete a request with a 200 response that carries
+ * no text, reasoning, or tool calls. Silence is never a useful answer: return
+ * an actionable error that names the provider and finish reason.
+ */
+export function emptyReplyError(providerName: string, finishReason?: string): SurfError {
+  const suffix = finishReason ? ` (finish reason: ${finishReason})` : '';
+  if (isBlockedFinishReason(finishReason)) {
+    return new SurfError(`${providerName} blocked the reply${suffix}.`, {
+      hint: 'Rephrase the prompt, reduce the attached content, or switch models with /model.',
+      retryable: false
+    });
+  }
+  return new SurfError(`${providerName} returned an empty reply${suffix}.`, {
+    hint: 'Try again, switch models with /model, or check the provider status. If this keeps happening, the endpoint may not support streaming responses.',
+    retryable: true
+  });
+}
+
 export function usageFromOpenAi(usage: any): Partial<Usage> {
   if (!usage || typeof usage !== 'object') return {};
   const input = tokenNumber(

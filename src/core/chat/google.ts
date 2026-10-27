@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatResult, ToolCall, Usage } from '../types.js';
+import type { ChatMessage, ChatResult, ProviderPart, ToolCall, Usage } from '../types.js';
 import { googleThinkingControl } from '../effort.js';
 import { SurfError } from '../errors.js';
 import type { ChatRequest } from './types.js';
@@ -68,6 +68,9 @@ export async function streamGoogle(request: ChatRequest): Promise<ChatResult> {
     retryBaseDelay(provider.settings)
   );
 
+  const providerParts: ProviderPart[] = [];
+  let signed = false;
+
   for await (const event of readSse(response)) {
     const payload = parseJson(event.data);
     if (!payload) continue;
@@ -87,7 +90,17 @@ export async function streamGoogle(request: ChatRequest): Promise<ChatResult> {
     const candidate = payload.candidates?.[0];
     if (candidate?.content?.parts) {
       for (const part of candidate.content.parts) {
-        const text = typeof part.text === 'string' ? part.text : '';
+        const hasText = typeof part.text === 'string';
+        const text = hasText ? part.text : '';
+        // Gemini 3 may attach a thought signature to an empty text part, so
+        // capture it before looking at the text. Dropping it breaks the next
+        // tool step with a 400 that reads "missing a thought_signature".
+        const signature =
+          typeof part.thoughtSignature === 'string'
+            ? part.thoughtSignature
+            : typeof part.functionCall?.thoughtSignature === 'string'
+              ? part.functionCall.thoughtSignature
+              : undefined;
         if (text) {
           if (part.thought === true) {
             result.reasoning += text;
@@ -97,6 +110,14 @@ export async function streamGoogle(request: ChatRequest): Promise<ChatResult> {
             callbacks.onText(text);
           }
         }
+
+        const exact: ProviderPart = {
+          // Preserve empty text when it carried the signature: the provider
+          // should receive the same part shape on the next tool step.
+          ...(hasText ? { text } : {}),
+          ...(part.thought === true ? { thought: true } : {}),
+          ...(signature ? { thoughtSignature: signature } : {})
+        };
         if (part.functionCall?.name) {
           const call: ToolCall = {
             id: part.functionCall.id || generateToolCallId('gcall'),
@@ -105,9 +126,14 @@ export async function streamGoogle(request: ChatRequest): Promise<ChatResult> {
               part.functionCall.args && typeof part.functionCall.args === 'object'
                 ? (part.functionCall.args as Record<string, unknown>)
                 : {},
-            signature: part.thoughtSignature || part.functionCall.thoughtSignature
+            signature
           };
           result.toolCalls.push(call);
+          exact.functionCall = { name: call.name, args: call.arguments };
+        }
+        if (Object.keys(exact).length > 0) {
+          providerParts.push(exact);
+          if (signature) signed = true;
         }
       }
     }
@@ -125,6 +151,7 @@ export async function streamGoogle(request: ChatRequest): Promise<ChatResult> {
     }
   }
 
+  if (signed && providerParts.length > 0) result.providerParts = providerParts;
   return result;
 }
 
@@ -153,6 +180,29 @@ function toGoogleContents(messages: ChatMessage[]): Array<Record<string, unknown
 
     if (message.role === 'user') {
       if (message.content) contents.push({ role: 'user', parts: [{ text: message.content }] });
+      continue;
+    }
+
+    // Replay exact parts when they carry Gemini thought signatures. The
+    // signature can sit on an empty text part, so rebuilding from text and
+    // tool calls is not equivalent.
+    const exact = (message.providerParts ?? [])
+      .map((part) => {
+        const output: Record<string, unknown> = {};
+        if (part.text !== undefined) output.text = part.text;
+        if (part.thought) output.thought = true;
+        if (part.functionCall) {
+          output.functionCall = {
+            name: part.functionCall.name,
+            args: part.functionCall.args
+          };
+        }
+        if (part.thoughtSignature) output.thoughtSignature = part.thoughtSignature;
+        return output;
+      })
+      .filter((part) => Object.keys(part).length > 0);
+    if (exact.length > 0) {
+      contents.push({ role: 'model', parts: exact });
       continue;
     }
 

@@ -183,6 +183,21 @@ export interface ThinkingBlock {
   data?: string;
 }
 
+/**
+ * Ordered provider-native content that must be replayed exactly. Gemini 3
+ * thought signatures can live on empty text parts, so reconstructing a request
+ * from text and tool calls alone is not always enough.
+ */
+export interface ProviderPart {
+  text?: string;
+  thought?: boolean;
+  thoughtSignature?: string;
+  functionCall?: {
+    name: string;
+    args: Record<string, unknown>;
+  };
+}
+
 export interface AssistantMessage {
   role: 'assistant';
   content: string;
@@ -190,6 +205,8 @@ export interface AssistantMessage {
   toolCalls?: ToolCall[];
   /** Opaque provider blocks that must be replayed with the message. */
   thinkingBlocks?: ThinkingBlock[];
+  /** Exact provider parts, used by Gemini thought signatures. */
+  providerParts?: ProviderPart[];
 }
 
 export interface ToolMessage {
@@ -219,6 +236,8 @@ export interface ChatResult {
   usage: Partial<Usage>;
   finishReason?: string;
   thinkingBlocks?: ThinkingBlock[];
+  /** Exact provider parts, used by Gemini thought signatures. */
+  providerParts?: ProviderPart[];
 }
 
 export interface ToolSchema {

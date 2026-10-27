@@ -22,6 +22,7 @@ import {
   type Catalog
 } from '../core/catalog.js';
 import { streamChat } from '../core/chat/index.js';
+import { isLengthFinishReason } from '../core/chat/common.js';
 import { compactConversation } from '../core/compact.js';
 import { updateConfig, updateConfigPath } from '../core/config.js';
 import { EFFORT_SETTINGS, activeEffort, effortLabel, parseEffort } from '../core/effort.js';
@@ -962,7 +963,10 @@ export default function App({
           tools: createTools(),
           permissions,
           maxSteps: configRef.current.maxSteps,
-          maxTokens: configRef.current.maxTokens ?? Math.min(selection.model.maxOutput || 8192, 32_768),
+          // Gemini counts thinking tokens against maxOutputTokens. Capping
+          // reasoning models at 32k could exhaust the budget before any
+          // visible answer was written, so allow the model's full 64k range.
+          maxTokens: configRef.current.maxTokens ?? Math.min(selection.model.maxOutput || 8192, 65_536),
           temperature: configRef.current.temperature,
           effort: activeEffort(configRef.current.effort),
           showReasoning: configRef.current.showReasoning,
@@ -1147,9 +1151,19 @@ Answer the question directly and concisely in GitHub-flavored Markdown. This exc
         });
 
         if (btwRef.current?.id !== id) return;
+        const answer = result.text || btwRef.current.answer;
+        // A truncated or reasoning-only reply would otherwise leave /btw with
+        // an empty answer box that looks like the request silently stopped.
+        const fallback = answer.trim()
+          ? answer
+          : result.reasoning.trim()
+            ? '_The model returned only hidden reasoning and no answer. Try again, lower /effort, or switch models with /model._'
+            : isLengthFinishReason(result.finishReason)
+              ? '_The model hit the output limit before writing an answer. Ask again, lower /effort, or raise maxTokens._'
+              : '_The model returned no answer. Try again or switch models with /model._';
         const final: BtwState = {
           ...btwRef.current,
-          answer: result.text || btwRef.current.answer,
+          answer: fallback,
           reasoning: result.reasoning || btwRef.current.reasoning,
           done: true
         };
@@ -1232,15 +1246,20 @@ Answer the question directly and concisely in GitHub-flavored Markdown. This exc
   );
 
   const initialPromptSent = useRef(false);
+  // Keep the latest sender without making it an effect dependency. Credential
+  // and catalog refreshes change `sendPrompt` during startup; clearing the
+  // timer on those renders silently dropped the initial prompt.
+  const sendPromptRef = useRef(sendPrompt);
+  sendPromptRef.current = sendPrompt;
   useEffect(() => {
     const prompt = initialPrompt?.trim();
     if (!prompt || initialPromptSent.current) return;
     initialPromptSent.current = true;
     const timer = setTimeout(() => {
-      void sendPrompt(prompt);
+      void sendPromptRef.current(prompt);
     }, 120);
     return () => clearTimeout(timer);
-  }, [initialPrompt, sendPrompt]);
+  }, [initialPrompt]);
 
   const runShell = useCallback(
     async (command: string) => {
@@ -2569,13 +2588,15 @@ Answer the question directly and concisely in GitHub-flavored Markdown. This exc
             return;
           }
           if (currentOverlay.kind === 'provider') {
-            // Resolve from the rendered list so Enter always activates the
-            // highlighted row, even if the display sort ever changes.
+            // Resolve the row that is actually highlighted. Re-sorting here
+            // would make Enter select a different provider than the one shown.
             const item = providerItems[selectedOverlayIndex];
             const provider = item ? providerById(catalog, item.id) : undefined;
             if (provider) selectProvider(provider);
             return;
           }
+          // Resolve the rendered row instead of re-filtering the list here.
+          // Otherwise Enter can resume a different session than the highlight.
           const item = sessionItems[selectedOverlayIndex];
           const record = item ? sessions.find((entry) => entry.id === item.id) : undefined;
           if (record) void resumeSession(record);

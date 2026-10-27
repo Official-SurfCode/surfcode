@@ -5,7 +5,14 @@ import { streamOpenAi } from './openai.js';
 import { streamAnthropic } from './anthropic.js';
 import { streamGoogle } from './google.js';
 import { isAbortError } from '../errors.js';
-import { isRetryableError, retryBaseDelay, sleepWithSignal } from './common.js';
+import {
+  emptyReplyError,
+  hasAssistantContent,
+  isLengthFinishReason,
+  isRetryableError,
+  retryBaseDelay,
+  sleepWithSignal
+} from './common.js';
 
 /**
  * Stream a chat completion with one transparent retry layer.
@@ -24,8 +31,9 @@ export async function streamChat(request: ChatRequest): Promise<ChatResult> {
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     let emitted = false;
+    let result: ChatResult;
     try {
-      return await streamChatOnce({
+      result = await streamChatOnce({
         ...request,
         idempotencyKey,
         callbacks: {
@@ -54,7 +62,27 @@ export async function streamChat(request: ChatRequest): Promise<ChatResult> {
         Math.round(baseDelay * 2 ** attempt * (0.85 + Math.random() * 0.3)),
         request.options.signal
       );
+      continue;
     }
+
+    // A 200 response with no content used to end the turn silently. An empty
+    // truncated reply is handed back so the agent can explain the output cap;
+    // every other empty reply is retried while nothing has been painted.
+    if (!hasAssistantContent(result)) {
+      if (isLengthFinishReason(result.finishReason)) return result;
+      const error = emptyReplyError(request.provider.name, result.finishReason);
+      lastError = error;
+      if (request.options.signal.aborted || attempt === retries || !isRetryableError(error)) {
+        throw error;
+      }
+      await sleepWithSignal(
+        Math.round(baseDelay * 2 ** attempt * (0.85 + Math.random() * 0.3)),
+        request.options.signal
+      );
+      continue;
+    }
+
+    return result;
   }
 
   throw lastError;

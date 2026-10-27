@@ -225,7 +225,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
         maxTokens:
           options.maxTokens ??
           startup.config.maxTokens ??
-          Math.min(selection.model.maxOutput || 8192, 32_768),
+          Math.min(selection.model.maxOutput || 8192, 65_536),
         temperature: options.temperature ?? startup.config.temperature,
         effort: activeEffort(options.effort ?? startup.config.effort),
         showReasoning: Boolean(options.reasoning),

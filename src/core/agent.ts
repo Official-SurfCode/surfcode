@@ -16,6 +16,7 @@ import type {
 import { addUsage, costForUsage, emptyUsage } from './usage.js';
 import { buildSystemPrompt } from './prompt.js';
 import { streamChat } from './chat/index.js';
+import { emptyReplyError, isLengthFinishReason } from './chat/common.js';
 import { createDelegateTool } from './delegate.js';
 import { isAbortError, SurfError } from './errors.js';
 import { findTool, toolSchemas } from '../tools/index.js';
@@ -111,7 +112,6 @@ export async function runAgent(options: AgentOptions): Promise<AgentOutcome> {
   const schemas = toolsEnabled ? toolSchemas(activeTools) : [];
   let aborted = false;
   let todos: TodoItem[] = [];
-  let emptyRetries = 0;
 
   for (let step = 1; step <= maxSteps; step += 1) {
     if (signal.aborted) {
@@ -189,25 +189,35 @@ export async function runAgent(options: AgentOptions): Promise<AgentOutcome> {
         content: result.text,
         ...(result.reasoning ? { reasoning: result.reasoning } : {}),
         ...(result.toolCalls.length > 0 ? { toolCalls: result.toolCalls } : {}),
-        ...(result.thinkingBlocks?.length ? { thinkingBlocks: result.thinkingBlocks } : {})
+        ...(result.thinkingBlocks?.length ? { thinkingBlocks: result.thinkingBlocks } : {}),
+        ...(result.providerParts?.length ? { providerParts: result.providerParts } : {})
       });
     }
 
     if (result.toolCalls.length === 0) {
-      if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
+      const hasText = result.text.trim().length > 0;
+      if (!hasText && isLengthFinishReason(result.finishReason)) {
+        // Gemini counts thinking tokens against maxOutputTokens and can hit
+        // MAX_TOKENS before producing a single visible token. Say so instead
+        // of ending the turn with an empty assistant bubble.
+        messages.push({
+          role: 'assistant',
+          content: result.reasoning
+            ? '_The model hit the output limit while thinking and returned no answer. Ask me to continue, lower /effort, or raise maxTokens._'
+            : '_Response reached the output limit before an answer was written. Ask me to continue, lower /effort, or raise maxTokens._'
+        });
+      } else if (!hasText && result.reasoning.trim()) {
+        messages.push({
+          role: 'assistant',
+          content: '_The model returned only hidden reasoning and no answer. Try again, lower /effort, or switch models with /model._'
+        });
+      } else if (!hasText) {
+        throw emptyReplyError(provider.name, result.finishReason);
+      } else if (isLengthFinishReason(result.finishReason)) {
         messages.push({
           role: 'assistant',
           content: '_Response reached the output limit. Ask me to continue if you need the rest._'
         });
-        break;
-      }
-      // An empty response (provider hiccup, content filter, dropped stream)
-      // used to end the turn silently. Nudge the model once so the task
-      // continues instead of appearing to stop for no reason.
-      if (!result.text && !result.reasoning && !aborted && step < maxSteps && emptyRetries < 1) {
-        emptyRetries += 1;
-        messages.push({ role: 'user', content: '(Your previous reply was empty. Continue the task.)' });
-        continue;
       }
       break;
     }

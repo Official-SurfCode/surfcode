@@ -13,6 +13,28 @@ import { createSession } from '../src/core/session.js';
 import type { SurfConfig } from '../src/core/types.js';
 
 const ANSWER = 'ONLY_ONE_REPLY';
+const SECOND_ANSWER = 'SECOND_TURN_REPLY';
+
+async function waitFor(
+  app: ReturnType<typeof render>,
+  predicate: (frame: string) => boolean,
+  timeout = 8_000
+): Promise<string> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const frame = stripAnsi(app.lastFrame() ?? '');
+    if (predicate(frame)) return frame;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`timed out waiting for the TUI frame:\n${stripAnsi(app.lastFrame() ?? '')}`);
+}
+
+async function type(app: ReturnType<typeof render>, text: string): Promise<void> {
+  for (const character of text) {
+    app.stdin.write(character);
+    await new Promise((resolve) => setTimeout(resolve, 8));
+  }
+}
 
 test('a completed turn hands the live message over to the timeline exactly once', async () => {
   const home = await mkdtemp(join(tmpdir(), 'surfcode-tui-turn-'));
@@ -102,6 +124,104 @@ test('a completed turn hands the live message over to the timeline exactly once'
       'expected the assistant reply to appear in the transcript'
     );
     assert.equal(requests, 1);
+  } finally {
+    app.unmount();
+    app.cleanup();
+    globalThis.fetch = previousFetch;
+    if (previousHome === undefined) delete process.env.SURFCODE_HOME;
+    else process.env.SURFCODE_HOME = previousHome;
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('an empty MAX_TOKENS turn is explained and the next turn still works', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'surfcode-tui-empty-'));
+  const previousHome = process.env.SURFCODE_HOME;
+  const previousFetch = globalThis.fetch;
+  process.env.SURFCODE_HOME = home;
+
+  const config: SurfConfig = {
+    ...defaultConfig(),
+    provider: 'mock-google',
+    model: 'mock-gemini',
+    theme: 'mono',
+    mode: 'build',
+    permissions: { read: 'allow', write: 'allow', shell: 'allow', fetch: 'allow' },
+    customProviders: {
+      'mock-google': {
+        name: 'Mock Google',
+        baseURL: 'http://127.0.0.1:9',
+        dialect: 'google',
+        keyless: true,
+        models: [
+          {
+            id: 'mock-gemini',
+            name: 'Mock Gemini',
+            context: 128_000,
+            output: 65_536,
+            tool_call: false,
+            reasoning: true
+          }
+        ]
+      }
+    },
+    sync: { enabled: false, auto: false, cursor: 0 }
+  };
+
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    const encoder = new TextEncoder();
+    const payload =
+      requests === 1
+        ? {
+            candidates: [{ content: { parts: [] }, finishReason: 'MAX_TOKENS' }],
+            usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 0, thoughtsTokenCount: 96 }
+          }
+        : {
+            candidates: [
+              { content: { parts: [{ text: SECOND_ANSWER }] }, finishReason: 'STOP' }
+            ]
+          };
+    return new Response(`data: ${JSON.stringify(payload)}\n\n`, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' }
+    });
+  };
+
+  const catalog = await loadCatalog(config);
+  const session = createSession({
+    cwd: home,
+    provider: 'mock-google',
+    model: 'mock-gemini',
+    mode: 'build'
+  });
+  const app = render(
+    React.createElement(App, {
+      cwd: home,
+      config,
+      catalog,
+      session,
+      initialPrompt: 'think hard'
+    })
+  );
+
+  try {
+    const first = await waitFor(
+      app,
+      (frame) => /output limit/i.test(frame) && frame.includes(' ready')
+    );
+    assert.match(first, /output limit/i);
+    assert.equal(requests, 1);
+
+    await type(app, 'try again');
+    app.stdin.write('\r');
+    const second = await waitFor(
+      app,
+      (frame) => frame.includes(SECOND_ANSWER) && frame.includes(' ready')
+    );
+    assert.match(second, new RegExp(SECOND_ANSWER));
+    assert.equal(requests, 2);
   } finally {
     app.unmount();
     app.cleanup();
